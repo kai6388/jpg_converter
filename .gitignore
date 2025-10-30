@@ -36,6 +36,9 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# PyInstaller
+*.spec
+
 # Project specific
 *.jpg
 *.jpeg

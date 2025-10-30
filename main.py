@@ -5,6 +5,7 @@ Windows 환경에서 동작하도록 설계됨
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from tkinterdnd2 import DND_FILES, TkinterDnD
 from PIL import Image
 import os
 import threading
@@ -14,17 +15,18 @@ from typing import List, Tuple
 class ImageConverterApp:
     """이미지를 JPG로 변환하는 GUI 애플리케이션"""
 
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: TkinterDnD.Tk):
         """GUI 초기화 및 설정"""
         self.root = root
         self.root.title("JPG 변환기")
-        self.root.geometry("600x600")
+        self.root.geometry("600x650")
         self.root.resizable(False, False)
 
         # 상태 변수 초기화
         self.image_paths: List[str] = []
         self.same_location_var = tk.BooleanVar(value=False)
         self.output_folder = tk.StringVar()
+        self.quality_var = tk.IntVar(value=95)
         self.is_converting = False
 
         # 지원 이미지 형식
@@ -64,7 +66,7 @@ class ImageConverterApp:
         list_frame = tk.Frame(self.root)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        list_label = tk.Label(list_frame, text="선택된 이미지:", anchor=tk.W)
+        list_label = tk.Label(list_frame, text="선택된 이미지 (드래그 앤 드롭으로 추가 가능):", anchor=tk.W)
         list_label.pack(fill=tk.X)
 
         # Listbox + Scrollbar
@@ -82,6 +84,10 @@ class ImageConverterApp:
         )
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.listbox.yview)
+
+        # 드래그 앤 드롭 설정
+        self.listbox.drop_target_register(DND_FILES)
+        self.listbox.dnd_bind('<<Drop>>', self.on_drop)
 
         # 목록에서 제거 버튼
         btn_remove = tk.Button(
@@ -124,6 +130,34 @@ class ImageConverterApp:
             width=10
         )
         self.btn_select_output.pack(side=tk.LEFT)
+
+        # 퀄리티 설정
+        quality_frame = tk.Frame(output_frame)
+        quality_frame.pack(fill=tk.X, pady=5)
+
+        quality_label = tk.Label(quality_frame, text="JPG 퀄리티:", width=10, anchor=tk.W)
+        quality_label.pack(side=tk.LEFT)
+
+        self.quality_scale = tk.Scale(
+            quality_frame,
+            from_=80,
+            to=100,
+            orient=tk.HORIZONTAL,
+            variable=self.quality_var,
+            length=200
+        )
+        self.quality_scale.pack(side=tk.LEFT, padx=5)
+
+        self.quality_value_label = tk.Label(
+            quality_frame,
+            text="95",
+            width=5,
+            anchor=tk.W
+        )
+        self.quality_value_label.pack(side=tk.LEFT)
+
+        # 퀄리티 값 변경 시 레이블 업데이트
+        self.quality_var.trace_add('write', self.update_quality_label)
 
         # ==================== 진행률 표시 ====================
         progress_frame = tk.Frame(self.root)
@@ -219,6 +253,42 @@ class ImageConverterApp:
 
         messagebox.showinfo("완료", f"{len(selected_indices)}개 항목이 제거되었습니다.")
 
+    def on_drop(self, event):
+        """드래그 앤 드롭 이벤트 핸들러"""
+        # 드롭된 파일 경로들을 파싱
+        files = self.root.tk.splitlist(event.data)
+
+        added_count = 0
+        for file_path in files:
+            # 경로에서 중괄호 제거 (Windows 경로 포맷)
+            file_path = file_path.strip('{}')
+
+            if os.path.isfile(file_path):
+                # 파일인 경우: 이미지 형식 확인
+                _, ext = os.path.splitext(file_path)
+                if ext.lower() in self.SUPPORTED_FORMATS:
+                    if file_path not in self.image_paths:
+                        self.image_paths.append(file_path)
+                        self.listbox.insert(tk.END, os.path.basename(file_path))
+                        added_count += 1
+
+            elif os.path.isdir(file_path):
+                # 폴더인 경우: 폴더 내 모든 이미지 추가
+                for filename in os.listdir(file_path):
+                    full_path = os.path.join(file_path, filename)
+                    if os.path.isfile(full_path):
+                        _, ext = os.path.splitext(filename)
+                        if ext.lower() in self.SUPPORTED_FORMATS:
+                            if full_path not in self.image_paths:
+                                self.image_paths.append(full_path)
+                                self.listbox.insert(tk.END, filename)
+                                added_count += 1
+
+        if added_count > 0:
+            messagebox.showinfo("완료", f"{added_count}개의 이미지가 추가되었습니다.")
+        else:
+            messagebox.showwarning("경고", "지원하는 이미지 파일을 찾을 수 없습니다.")
+
     def toggle_output_path(self):
         """'같은 위치에 저장' 체크박스 토글"""
         if self.same_location_var.get():
@@ -233,6 +303,10 @@ class ImageConverterApp:
         folder = filedialog.askdirectory(title="출력 폴더 선택")
         if folder:
             self.output_folder.set(folder)
+
+    def update_quality_label(self, *args):
+        """퀄리티 값 레이블 업데이트"""
+        self.quality_value_label.config(text=str(self.quality_var.get()))
 
     def validate_images(self) -> bool:
         """변환 전 검증"""
@@ -304,6 +378,8 @@ class ImageConverterApp:
 
     def _convert_single_image(self, input_path: str, output_path: str):
         """단일 이미지 변환"""
+        quality = self.quality_var.get()
+
         with Image.open(input_path) as img:
             # RGBA, LA, P 모드는 RGB로 변환 (흰 배경)
             if img.mode in ('RGBA', 'LA', 'P'):
@@ -323,10 +399,10 @@ class ImageConverterApp:
                     else:
                         rgb_img.paste(img.convert('RGB'))
 
-                rgb_img.save(output_path, 'JPEG', quality=95, optimize=True)
+                rgb_img.save(output_path, 'JPEG', quality=quality, optimize=True)
             else:
                 # 다른 모드는 RGB로 변환하여 저장
-                img.convert('RGB').save(output_path, 'JPEG', quality=95, optimize=True)
+                img.convert('RGB').save(output_path, 'JPEG', quality=quality, optimize=True)
 
     def get_output_path(self, input_path: str) -> str:
         """출력 경로 결정"""
@@ -386,7 +462,7 @@ class ImageConverterApp:
 
 def main():
     """메인 실행 함수"""
-    root = tk.Tk()
+    root = TkinterDnD.Tk()
     app = ImageConverterApp(root)
     root.mainloop()
 
